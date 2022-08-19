@@ -85,7 +85,13 @@ class Geothermic(Device):
 class Ventilation(Device):
     def __init__(self):
         Device.__init__(self)
+        self.switch = EnumControl.Switch.OFF # type: EnumControl.Switch
         self.is_small_vam = False  # type: bool
+
+class VentilationStatus:
+    def __init__(self, 
+                 switch: EnumControl.Switch = None):
+        self.switch = switch  # type: EnumControl.Switch
 
 
 class HD(Device):

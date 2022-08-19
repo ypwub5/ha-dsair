@@ -3,7 +3,7 @@ import typing
 from typing import Optional
 
 from .config import Config
-from .dao import AirCon, Device, get_device_by_aircon, AirConStatus
+from .dao import AirCon, Device, get_device_by_aircon, AirConStatus, Ventilation, VentilationStatus
 from .base_bean import BaseBean
 from .ctrl_enum import EnumCmdType, EnumDevice, EnumControl, EnumFanDirection, EnumFanVolume
 
@@ -237,6 +237,75 @@ class AirConControlParam(AirconParam):
                     if status.humidity is not None:
                         flag = flag | EnumControl.Type.HUMIDITY
                         li.append((1, status.humidity))
+        s.write1(flag)
+        for bit, val in li:
+            if bit == 1:
+                s.write1(val)
+            elif bit == 2:
+                s.write2(val)
+
+class VentilationParam(Param):
+    def __init__(self, cmd_cype, has_result):
+        Param.__init__(self, EnumDevice.VENTILATION, cmd_cype, has_result)
+
+class VentilationCapabilityQueryParam(VentilationParam):
+    def __init__(self):
+        VentilationParam.__init__(self, EnumCmdType.VENT_QUERY_CAPABILITY, True)
+        self._vents: typing.List[Ventilation] = []
+
+    def generate_subbody(self, s):
+        s.write1(len(self._vents))
+        for i in self._vents:
+            s.write1(i.room_id)
+            s.write1(1)
+            s.write1(0)
+
+    @property
+    def vents(self):
+        return self._vents
+
+    @vents.setter
+    def vents(self, value):
+        self._vents = value
+
+class VentilationQueryStatusParam(VentilationParam):
+    def __init__(self):
+        super().__init__(EnumCmdType.QUERY_STATUS, True)
+        self._device = None  # type: Optional[Ventilation]
+
+    def generate_subbody(self, s):
+        s.write1(self._device.room_id)
+        s.write1(self._device.unit_id)
+        t = EnumControl.Type
+        flag = t.SWITCH
+        # dev = self.device
+        s.write1(flag)
+
+    @property
+    def device(self):
+        return self._device
+
+    @device.setter
+    def device(self, v: Ventilation):
+        self._device = v
+
+class VentilationControlParam(VentilationParam):
+    def __init__(self, vent: Ventilation, new_status: VentilationStatus):
+        super().__init__(EnumCmdType.CONTROL, False)
+        self.target = EnumDevice.VENTILATION
+        self._vent = vent
+        self._new_status = new_status
+
+    def generate_subbody(self, s):
+        vent = self._vent
+        status = self._new_status
+        s.write1(vent.room_id)
+        s.write1(vent.unit_id)
+        li = []
+        flag = 0
+        if status.switch is not None:
+            flag = flag | EnumControl.Type.SWITCH
+            li.append((1, status.switch.value))
         s.write1(flag)
         for bit, val in li:
             if bit == 1:

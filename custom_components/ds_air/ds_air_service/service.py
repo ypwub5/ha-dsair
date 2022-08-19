@@ -4,11 +4,11 @@ import time
 import typing
 from threading import Thread, Lock
 
-from .ctrl_enum import EnumDevice
-from .dao import Room, AirCon, AirConStatus, get_device_by_aircon, Sensor, STATUS_ATTR
+from .ctrl_enum import EnumDevice, EnumControl
+from .dao import Room, AirCon, AirConStatus, Ventilation, VentilationStatus, get_device_by_aircon, Sensor, STATUS_ATTR
 from .decoder import decoder, BaseResult
 from .display import display
-from .param import Param, HandShakeParam, HeartbeatParam, AirConControlParam, AirConQueryStatusParam, Sensor2InfoParam
+from .param import Param, HandShakeParam, HeartbeatParam, AirConControlParam, AirConQueryStatusParam, Sensor2InfoParam, VentilationQueryStatusParam, VentilationControlParam
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,10 +142,12 @@ class Service:
     _aircons = None  # type: typing.List[AirCon]
     _new_aircons = None  # type: typing.List[AirCon]
     _bathrooms = None  # type: typing.List[AirCon]
+    _ventilations = None # type: typing.List[Ventilation]
     _ready = False  # type: bool
     _none_stat_dev_cnt = 0  # type: int
     _status_hook = []  # type: typing.List[(AirCon, typing.Callable)]
     _sensor_hook = []  # type: typing.List[(str, typing.Callable)]
+    _vent_hook = [] # type: typing.List[(Ventilation, typing.Callable)]
     _heartbeat_thread = None
     _sensors = []  # type: typing.List[Sensor]
     _scan_interval = 5  # type: int
@@ -160,7 +162,8 @@ class Service:
         Service._heartbeat_thread = HeartBeatThread()
         Service._heartbeat_thread.start()
         while Service._rooms is None or Service._aircons is None \
-                or Service._new_aircons is None or Service._bathrooms is None:
+                or Service._new_aircons is None or Service._bathrooms is None \
+                or Service._ventilations is None:
             time.sleep(1)
         for i in Service._aircons:
             for j in Service._rooms:
@@ -180,6 +183,12 @@ class Service:
                     i.alias = j.alias
                     if i.unit_id:
                         i.alias += str(i.unit_id)
+        for i in Service._ventilations:
+            for j in Service._rooms:
+                if i.room_id == j.id:
+                    i.alias = j.alias
+                    if i.unit_id:
+                        i.alias += str(i.unit_id)
         Service._ready = True
 
     @staticmethod
@@ -192,7 +201,9 @@ class Service:
             Service._aircons = None
             Service._new_aircons = None
             Service._bathrooms = None
+            Service._ventilations = None
             Service._none_stat_dev_cnt = 0
+            Service._vent_hook = []
             Service._status_hook = []
             Service._sensor_hook = []
             Service._heartbeat_thread = None
@@ -204,8 +215,22 @@ class Service:
         return Service._new_aircons+Service._aircons+Service._bathrooms
 
     @staticmethod
+    def get_ventilations():
+        return Service._ventilations
+
+    @staticmethod
     def control(aircon: AirCon, status: AirConStatus):
         p = AirConControlParam(aircon, status)
+        Service.send_msg(p)
+
+    @staticmethod
+    def control_vent(aircon: Ventilation, switch: bool):
+        statusVent = VentilationStatus()
+        if switch == True:
+            statusVent.switch = EnumControl.Switch(1)
+        else:
+            statusVent.switch = EnumControl.Switch(0)
+        p = VentilationControlParam(Service._ventilations[0], statusVent)
         Service.send_msg(p)
 
     @staticmethod
@@ -215,6 +240,10 @@ class Service:
     @staticmethod
     def register_sensor_hook(unique_id: str, hook: typing.Callable):
         Service._sensor_hook.append((unique_id, hook))
+
+    @staticmethod
+    def register_vent_hook(device: Ventilation, hook: typing.Callable):
+        Service._vent_hook.append((device, hook))
 
     # ----split line---- above for component, below for inner call
 
@@ -242,6 +271,10 @@ class Service:
     @staticmethod
     def set_sensors(sensors):
         Service._sensors = sensors
+
+    @staticmethod
+    def set_ventilations(ventilations):
+        Service._ventilations = ventilations
 
     @staticmethod
     def set_device(t: EnumDevice, v: typing.List[AirCon]):
@@ -288,11 +321,28 @@ class Service:
                         _log(str(e))
 
     @staticmethod
+    def set_ventilation_status(room: int, unit: int, status: VentilationStatus):
+        if Service._ready:
+            Service.update_ventilation(room, unit, status=status)
+        else:
+            for i in Service._ventilations:
+                if i.unit_id == unit and i.room_id == room:
+                    i.status = status
+                    i.switch = status.switch
+                    # Service._none_stat_dev_cnt -= 1
+                    break
+
+    @staticmethod
     def poll_status():
         for i in Service._new_aircons:
             p = AirConQueryStatusParam()
             p.target = EnumDevice.NEWAIRCON
             p.device = i
+            Service.send_msg(p)
+        for v in Service._ventilations:
+            p = VentilationQueryStatusParam()
+            p.target = EnumDevice.VENTILATION
+            p.device = v
             Service.send_msg(p)
         p = Sensor2InfoParam()
         Service.send_msg(p)
@@ -307,6 +357,18 @@ class Service:
                     func(**kwargs)
                 except Exception as e:
                     _log('hook error!!')
+                    _log(str(e))
+
+    @staticmethod
+    def update_ventilation(room: int, unit: int, **kwargs):
+        li = Service._vent_hook
+        for item in li:
+            i, func = item
+            if i.unit_id == unit and i.room_id == room:
+                try:
+                    func(**kwargs)
+                except Exception as e:
+                    _log('vent hook error!!')
                     _log(str(e))
 
     @staticmethod
