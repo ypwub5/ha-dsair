@@ -1,5 +1,7 @@
+from cmath import log
 import struct
 import typing
+import logging
 
 from .base_bean import BaseBean
 from .config import Config
@@ -10,6 +12,13 @@ from .dao import Room, AirCon, Geothermic, Ventilation, HD, Device, AirConStatus
 from .param import GetRoomInfoParam, AirConRecommendedIndoorTempParam, AirConCapabilityQueryParam, \
     AirConQueryStatusParam, Sensor2InfoParam, VentilationCapabilityQueryParam, VentilationQueryStatusParam
 
+_LOGGER = logging.getLogger(__name__)
+
+
+def _log(s: str):
+    s = str(s)
+    for i in s.split('\n'):
+        _LOGGER.warning(i)
 
 def decoder(b):
     if b[0] != 2:
@@ -481,6 +490,7 @@ class GetRoomInfoResult(BaseResult):
         new_aircons = []
         bathrooms = []
         ventilations = []
+        smallVAM = []
         for room in Service.get_rooms():
             if room.air_con is not None:
                 room.air_con.alias = room.alias
@@ -491,7 +501,12 @@ class GetRoomInfoResult(BaseResult):
                 else:
                     aircons.append(room.air_con)
             elif room.ventilation is not None:
-                ventilations.append(room.ventilation)
+                if room.ventilation.is_small_vam:
+                    smallVAM.append(room.ventilation)
+                    _log('ds_air ---> small vam found')
+                else:
+                    ventilations.append(room.ventilation)
+                    _log('ds_air ---> big vam found')
 
         p = AirConCapabilityQueryParam()
         p.aircons = aircons
@@ -509,6 +524,10 @@ class GetRoomInfoResult(BaseResult):
         p.vents = ventilations
         p.target = EnumDevice.VENTILATION
         Service.send_msg(p)
+
+        # no ventilator detected
+        if smallVAM.count == 0 and ventilations.count == 0:
+            Service.set_ventilations([])
 
     @property
     def count(self):
